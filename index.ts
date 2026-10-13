@@ -7,29 +7,70 @@ import fs from 'fs';
 const app = express();
 const PORT = 3000;
 
-// @note trust proxy - set to number of proxies in front of app
+// Vercel / proxy
 app.set('trust proxy', 1);
 
-// @note middleware setup
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(express.text({ type: ['text/plain', 'application/octet-stream'] }));
+// ----------------------------------------------------
+// BODY PARSERS + RAW BODY CAPTURE
+// ----------------------------------------------------
+
+app.use(
+  express.json({
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf.toString('utf8');
+    },
+  }),
+);
+
+app.use(
+  express.urlencoded({
+    extended: true,
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf.toString('utf8');
+    },
+  }),
+);
+
+app.use(
+  express.text({
+    type: ['text/plain', 'application/octet-stream'],
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf.toString('utf8');
+    },
+  }),
+);
+
 app.use(cors());
 
-// @note rate limiter - 50 requests per minute
+// ----------------------------------------------------
+// RATE LIMIT
+// ----------------------------------------------------
+
 const limiter = rateLimit({
   windowMs: 60_000,
   max: 50,
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { trustProxy: false, xForwardedForHeader: false },
+
+  // Needed when running behind Vercel/proxy
+  validate: {
+    trustProxy: false,
+    xForwardedForHeader: false,
+  },
 });
+
 app.use(limiter);
 
-// @note static files from public folder
+// ----------------------------------------------------
+// STATIC FILES
+// ----------------------------------------------------
+
 app.use(express.static(path.join(process.cwd(), 'public')));
 
-// @note request logging middleware
+// ----------------------------------------------------
+// REQUEST LOGGER
+// ----------------------------------------------------
+
 app.use((req: Request, _res: Response, next: NextFunction) => {
   const clientIp =
     (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
@@ -38,82 +79,188 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
     'unknown';
 
   console.log(
-    `[REQ] ${req.method} ${req.path} → ${clientIp} | ${_res.statusCode}`,
+    `[REQ] ${req.method} ${req.path} -> ${clientIp}`,
   );
+
   next();
 });
 
-// @note root endpoint
+// ----------------------------------------------------
+// ROOT
+// ----------------------------------------------------
+
 app.get('/', (_req: Request, res: Response) => {
-  res.send('Hello, world!');
+  res.send('GTLogin running!');
 });
 
-/**
- * @note dashboard endpoint - serves login HTML page with client data
- * @param req - express request with optional body data
- * @param res - express response
- */
+// ----------------------------------------------------
+// LOGIN DASHBOARD
+// ----------------------------------------------------
+
 app.all('/player/login/dashboard', async (req: Request, res: Response) => {
-const body = req.body;
-let clientData = '';
+  try {
+    let clientData = '';
 
-if (typeof body === 'string' && body.length > 0) {
-  clientData = body;
-} else if (
-  body &&
-  typeof body === 'object' &&
-  Object.keys(body).length > 0
-) {
-  const keys = Object.keys(body);
+    const rawBody = (req as any).rawBody as string | undefined;
+    const contentType = req.headers['content-type'] || '';
 
-  if (keys.length === 1 && body[keys[0]] === '') {
-    clientData = keys[0];
-  } else {
-    clientData = keys
-      .map((key) => `${key}|${body[key] ?? ''}`)
-      .join('\n');
+    /*
+      Growtopia may send the client data like:
+
+      tankIDName|
+      tankIDPass|
+      requestedName|
+      f|1
+      protocol|227
+      ...
+
+      With application/x-www-form-urlencoded it may arrive
+      URL encoded and sometimes as one key with an empty value.
+    */
+
+    if (rawBody && rawBody.length > 0) {
+      if (contentType.includes('application/x-www-form-urlencoded')) {
+        try {
+          const params = new URLSearchParams(rawBody);
+          const entries = Array.from(params.entries());
+
+          // Common Growtopia format:
+          // one massive key containing all client data, empty value
+          if (entries.length === 1 && entries[0][1] === '') {
+            clientData = entries[0][0];
+          } else {
+            // Fallback: decode the complete original body
+            try {
+              clientData = decodeURIComponent(
+                rawBody.replace(/\+/g, ' '),
+              );
+            } catch {
+              clientData = rawBody;
+            }
+          }
+        } catch {
+          try {
+            clientData = decodeURIComponent(
+              rawBody.replace(/\+/g, ' '),
+            );
+          } catch {
+            clientData = rawBody;
+          }
+        }
+      } else {
+        // text/plain / octet-stream etc.
+        try {
+          clientData = decodeURIComponent(
+            rawBody.replace(/\+/g, ' '),
+          );
+        } catch {
+          clientData = rawBody;
+        }
+      }
+    }
+
+    // Fallback to already parsed body
+    if (!clientData && req.body) {
+      if (typeof req.body === 'string') {
+        clientData = req.body;
+      } else if (typeof req.body === 'object') {
+        const keys = Object.keys(req.body);
+
+        if (keys.length > 0) {
+          if (
+            keys.length === 1 &&
+            (req.body as Record<string, unknown>)[keys[0]] === ''
+          ) {
+            clientData = keys[0];
+          } else {
+            clientData = keys
+              .map((key) => {
+                const value = (req.body as Record<string, unknown>)[key];
+                return `${key}|${value ?? ''}`;
+              })
+              .join('\n');
+          }
+        }
+      }
+    }
+
+    console.log(
+      `[DASHBOARD] rawLength=${rawBody?.length ?? 0} clientDataLength=${clientData.length}`,
+    );
+
+    if (!clientData) {
+      console.log('[DASHBOARD] WARNING: clientData is empty');
+    }
+
+    // Inner token used later by Growtopia
+    const encodedClientData = Buffer.from(
+      clientData,
+      'utf8',
+    ).toString('base64');
+
+    const templatePath = path.join(
+      process.cwd(),
+      'template',
+      'dashboard.html',
+    );
+
+    const templateContent = fs.readFileSync(
+      templatePath,
+      'utf-8',
+    );
+
+    const htmlContent = templateContent.replace(
+      '{{ data }}',
+      encodedClientData,
+    );
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(htmlContent);
+  } catch (error) {
+    console.log(`[DASHBOARD ERROR]: ${error}`);
+
+    res.status(500).send('Internal Server Error');
   }
-}
-
-console.log(`[DASHBOARD] clientData length=${clientData.length}`);
-  // @note convert clientData to base64 string without JSON quotes
-  const encodedClientData = Buffer.from(clientData).toString('base64');
-
-  // @note read dashboard template and replace placeholder
-  const templatePath = path.join(process.cwd(), 'template', 'dashboard.html');
-
-  const templateContent = fs.readFileSync(templatePath, 'utf-8');
-  const htmlContent = templateContent.replace('{{ data }}', encodedClientData);
-
-  res.setHeader('Content-Type', 'text/html');
-  res.send(htmlContent);
 });
 
-/**
- * @note validate login endpoint - validates GrowID credentials
- * @param req - express request with growId, password, _token
- * @param res - express response with token
- */
+// ----------------------------------------------------
+// LOGIN / REGISTER VALIDATION
+// ----------------------------------------------------
+
 app.all(
   '/player/growid/login/validate',
   async (req: Request, res: Response) => {
     try {
       const formData = req.body as Record<string, string>;
-      const _token = formData._token;
-      const growId = formData.growId;
-      const password = formData.password;
-      const email = formData.email;
+
+      const _token = formData._token || '';
+      const growId = formData.growId || '';
+      const password = formData.password || '';
+      const email = formData.email || '';
+
+      console.log(
+        `[LOGIN] growIdLength=${growId.length} innerTokenLength=${_token.length} registration=${email ? 1 : 0}`,
+      );
+
+      if (!_token) {
+        console.log('[LOGIN ERROR] _token is empty');
+      }
 
       let token = '';
+
       if (email) {
         token = Buffer.from(
           `_token=${_token}&growId=${growId}&password=${password}&email=${email}&reg=1`,
+          'utf8',
         ).toString('base64');
       } else {
         token = Buffer.from(
           `_token=${_token}&growId=${growId}&password=${password}&reg=0`,
+          'utf8',
         ).toString('base64');
       }
+
+      res.setHeader('Content-Type', 'application/json');
 
       res.send(
         JSON.stringify({
@@ -125,7 +272,8 @@ app.all(
         }),
       );
     } catch (error) {
-      console.log(`[ERROR]: ${error}`);
+      console.log(`[LOGIN ERROR]: ${error}`);
+
       res.status(500).json({
         status: 'error',
         message: 'Internal Server Error',
@@ -134,112 +282,209 @@ app.all(
   },
 );
 
-/**
- * @note first checktoken endpoint - redirects to validate endpoint
- * @param req - express request with refreshToken and clientData
- * @param res - express response with updated token
- */
-app.all('/player/growid/checktoken', async (_req: Request, res: Response) => {
-  return res.redirect(307, '/player/growid/validate/checktoken');
-});
+// ----------------------------------------------------
+// CHECK TOKEN REDIRECT
+// ----------------------------------------------------
 
-/**
- * @note second checktoken endpoint - validates token and returns updated token
- * @param req - express request with refreshToken and clientData
- * @param res - express response with updated token
- */
+app.all(
+  '/player/growid/checktoken',
+  async (_req: Request, res: Response) => {
+    return res.redirect(
+      307,
+      '/player/growid/validate/checktoken',
+    );
+  },
+);
+
+// ----------------------------------------------------
+// CHECK / REFRESH TOKEN
+// ----------------------------------------------------
+
 app.all(
   '/player/growid/validate/checktoken',
   async (req: Request, res: Response) => {
     try {
       let refreshToken: string | undefined;
       let clientData: string | undefined;
+
       let source = 'empty';
-      const contentType = req.headers['content-type'] || '';
 
-      if (typeof req.body === 'object' && req.body !== null) {
-        const formData = req.body as Record<string, string>;
+      const contentType =
+        req.headers['content-type'] || '';
 
-        if ('refreshToken' in formData || 'clientData' in formData) {
+      // ----------------------------------------
+      // Parsed JSON / form body
+      // ----------------------------------------
+
+      if (
+        typeof req.body === 'object' &&
+        req.body !== null
+      ) {
+        const formData =
+          req.body as Record<string, string>;
+
+        if (
+          'refreshToken' in formData ||
+          'clientData' in formData
+        ) {
           refreshToken = formData.refreshToken;
           clientData = formData.clientData;
-          source = contentType.includes('application/json')
+
+          source = contentType.includes(
+            'application/json',
+          )
             ? 'json/object'
             : 'form-urlencoded';
-        } else if (Object.keys(formData).length === 1) {
-          const rawPayload = Object.keys(formData)[0];
-          const params = new URLSearchParams(rawPayload);
-          refreshToken = params.get('refreshToken') || undefined;
-          clientData = params.get('clientData') || undefined;
+        } else if (
+          Object.keys(formData).length === 1
+        ) {
+          const rawPayload =
+            Object.keys(formData)[0];
+
+          const params =
+            new URLSearchParams(rawPayload);
+
+          refreshToken =
+            params.get('refreshToken') ||
+            undefined;
+
+          clientData =
+            params.get('clientData') ||
+            undefined;
+
           if (refreshToken || clientData) {
-            source = 'single-key-form-payload';
+            source =
+              'single-key-form-payload';
           }
         }
-      } else if (typeof req.body === 'string' && req.body.length > 0) {
-        const params = new URLSearchParams(req.body);
-        refreshToken = params.get('refreshToken') || undefined;
-        clientData = params.get('clientData') || undefined;
+      }
+
+      // ----------------------------------------
+      // Text body
+      // ----------------------------------------
+
+      else if (
+        typeof req.body === 'string' &&
+        req.body.length > 0
+      ) {
+        const params =
+          new URLSearchParams(req.body);
+
+        refreshToken =
+          params.get('refreshToken') ||
+          undefined;
+
+        clientData =
+          params.get('clientData') ||
+          undefined;
+
         source = 'string/body-parser';
       }
 
-      if (
-        (!refreshToken || !clientData) &&
-        req.readable &&
-        !req.readableEnded
-      ) {
-        const rawBody = await new Promise<string>((resolve, reject) => {
-          let rawPayload = '';
+      // ----------------------------------------
+      // RAW BODY FALLBACK
+      // ----------------------------------------
 
-          req.on('data', (chunk: Buffer | string) => {
-            rawPayload += chunk.toString();
-          });
-          req.on('end', () => resolve(rawPayload));
-          req.on('error', reject);
-        });
+      if (!refreshToken || !clientData) {
+        const rawBody =
+          (req as any).rawBody as
+            | string
+            | undefined;
 
         if (rawBody) {
-          const params = new URLSearchParams(rawBody);
-          refreshToken = params.get('refreshToken') || refreshToken;
-          clientData = params.get('clientData') || clientData;
+          const params =
+            new URLSearchParams(rawBody);
+
+          refreshToken =
+            params.get('refreshToken') ||
+            refreshToken;
+
+          clientData =
+            params.get('clientData') ||
+            clientData;
+
           if (refreshToken || clientData) {
-            source = 'raw-stream';
+            source = 'raw-body';
           }
         }
       }
 
-      console.log(`[CHECKTOKEN] Parsed as ${source}`);
+      console.log(
+        `[CHECKTOKEN] Parsed as ${source}`,
+      );
 
       if (!refreshToken || !clientData) {
-        console.log(`[ERROR]: Missing refreshToken or clientData`);
+        console.log(
+          '[CHECKTOKEN ERROR] Missing refreshToken or clientData',
+        );
+
         res.status(200).json({
           status: 'error',
-          message: 'Missing refreshToken or clientData',
+          message:
+            'Missing refreshToken or clientData',
         });
+
         return;
       }
 
-      let decodedRefreshToken = Buffer.from(refreshToken, 'base64').toString(
-        'utf-8',
-      );
+      // Decode current refresh token
+      let decodedRefreshToken =
+        Buffer.from(
+          refreshToken,
+          'base64',
+        ).toString('utf-8');
 
-      // @note remove &reg=0/1 from decodedRefreshToken if available
-      if (decodedRefreshToken.includes('&reg=0')) {
-        decodedRefreshToken = decodedRefreshToken.replace('&reg=0', '');
-      } else if (decodedRefreshToken.includes('&reg=1')) {
-        decodedRefreshToken = decodedRefreshToken.replace('&reg=1', '');
+      // Remove old registration flag
+      if (
+        decodedRefreshToken.includes(
+          '&reg=0',
+        )
+      ) {
+        decodedRefreshToken =
+          decodedRefreshToken.replace(
+            '&reg=0',
+            '',
+          );
+      } else if (
+        decodedRefreshToken.includes(
+          '&reg=1',
+        )
+      ) {
+        decodedRefreshToken =
+          decodedRefreshToken.replace(
+            '&reg=1',
+            '',
+          );
       }
 
-      const token = Buffer.from(
+      // Create updated inner client token
+      const newInnerToken =
+        Buffer.from(
+          clientData,
+          'utf8',
+        ).toString('base64');
+
+      const updatedTokenText =
         decodedRefreshToken.replace(
           /(_token=)[^&]*/,
-          `$1${Buffer.from(clientData).toString('base64')}`,
-        ),
-      ).toString('base64');
+          `$1${newInnerToken}`,
+        );
+
+      const token =
+        Buffer.from(
+          updatedTokenText,
+          'utf8',
+        ).toString('base64');
+
+      res.setHeader(
+        'Content-Type',
+        'application/json',
+      );
 
       res.send(
         JSON.stringify({
           status: 'success',
-          message: 'Account Validated.',
+          message: 'Token is valid.',
           token,
           url: '',
           accountType: 'growtopia',
@@ -247,7 +492,10 @@ app.all(
         }),
       );
     } catch (error) {
-      console.log(`[ERROR]: ${error}`);
+      console.log(
+        `[CHECKTOKEN ERROR]: ${error}`,
+      );
+
       res.status(200).json({
         status: 'error',
         message: 'Internal Server Error',
@@ -256,8 +504,14 @@ app.all(
   },
 );
 
+// ----------------------------------------------------
+// START SERVER
+// ----------------------------------------------------
+
 app.listen(PORT, () => {
-  console.log(`[SERVER] Running on http://localhost:${PORT}`);
+  console.log(
+    `[SERVER] Running on http://localhost:${PORT}`,
+  );
 });
 
 export default app;
