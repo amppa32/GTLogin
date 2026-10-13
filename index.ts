@@ -75,9 +75,7 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
     req.socket.remoteAddress ||
     'unknown';
 
-  console.log(
-    `[REQ] ${req.method} ${req.path} -> ${clientIp}`,
-  );
+  console.log(`[REQ] ${req.method} ${req.path} -> ${clientIp}`);
 
   next();
 });
@@ -100,9 +98,7 @@ app.all(
     try {
       let clientData = '';
 
-      const rawBody = (req as any).rawBody as
-        | string
-        | undefined;
+      const rawBody = (req as any).rawBody as string | undefined;
 
       const contentType =
         req.headers['content-type'] || '';
@@ -114,8 +110,11 @@ app.all(
           )
         ) {
           try {
-            const params = new URLSearchParams(rawBody);
-            const entries = Array.from(params.entries());
+            const params =
+              new URLSearchParams(rawBody);
+
+            const entries =
+              Array.from(params.entries());
 
             if (
               entries.length === 1 &&
@@ -124,27 +123,30 @@ app.all(
               clientData = entries[0][0];
             } else {
               try {
-                clientData = decodeURIComponent(
-                  rawBody.replace(/\+/g, ' '),
-                );
+                clientData =
+                  decodeURIComponent(
+                    rawBody.replace(/\+/g, ' '),
+                  );
               } catch {
                 clientData = rawBody;
               }
             }
           } catch {
             try {
-              clientData = decodeURIComponent(
-                rawBody.replace(/\+/g, ' '),
-              );
+              clientData =
+                decodeURIComponent(
+                  rawBody.replace(/\+/g, ' '),
+                );
             } catch {
               clientData = rawBody;
             }
           }
         } else {
           try {
-            clientData = decodeURIComponent(
-              rawBody.replace(/\+/g, ' '),
-            );
+            clientData =
+              decodeURIComponent(
+                rawBody.replace(/\+/g, ' '),
+              );
           } catch {
             clientData = rawBody;
           }
@@ -155,11 +157,17 @@ app.all(
       if (!clientData && req.body) {
         if (typeof req.body === 'string') {
           clientData = req.body;
-        } else if (typeof req.body === 'object') {
+        } else if (
+          typeof req.body === 'object'
+        ) {
           const body =
-            req.body as Record<string, unknown>;
+            req.body as Record<
+              string,
+              unknown
+            >;
 
-          const keys = Object.keys(body);
+          const keys =
+            Object.keys(body);
 
           if (keys.length > 0) {
             if (
@@ -194,11 +202,12 @@ app.all(
           'utf8',
         ).toString('base64');
 
-      const templatePath = path.join(
-        process.cwd(),
-        'template',
-        'dashboard.html',
-      );
+      const templatePath =
+        path.join(
+          process.cwd(),
+          'template',
+          'dashboard.html',
+        );
 
       const templateContent =
         fs.readFileSync(
@@ -224,7 +233,9 @@ app.all(
       return res
         .status(500)
         .type('text/plain')
-        .send('Internal Server Error');
+        .send(
+          'Internal Server Error',
+        );
     }
   },
 );
@@ -232,23 +243,24 @@ app.all(
 // =====================================================
 // LOGIN VALIDATE
 // POST = create token
-// GET  = handoff/navigation test
+// GET  = handoff/navigation
 // =====================================================
 
 app.all(
   '/player/growid/login/validate',
   async (req: Request, res: Response) => {
     try {
-      // ---------------------------------------------
-      // EXPERIMENT 2:
-      // GET handoff after dashboard fetch()
-      // ---------------------------------------------
+      // =================================================
+      // GET HANDOFF
+      // =================================================
 
       if (
         req.method === 'GET' &&
-        typeof req.query.token === 'string'
+        typeof req.query.token ===
+          'string'
       ) {
-        const token = req.query.token;
+        const token =
+          req.query.token;
 
         console.log(
           `[LOGIN GET HANDOFF] tokenLength=${token.length}`,
@@ -259,26 +271,33 @@ app.all(
           'no-store',
         );
 
-return res
-  .status(200)
-  .type('text/html')
-  .send(
-    JSON.stringify({
-      status: 'success',
-      message: 'Account Validated.',
-      token,
-      url: '',
-      accountType: 'growtopia',
-    }),
-  );
+        // IMPORTANT:
+        // GET handoff = text/html JSON string
+        return res
+          .status(200)
+          .type('text/html')
+          .send(
+            JSON.stringify({
+              status: 'success',
+              message:
+                'Account Validated.',
+              token,
+              url: '',
+              accountType:
+                'growtopia',
+            }),
+          );
       }
 
-      // ---------------------------------------------
-      // NORMAL POST LOGIN
-      // ---------------------------------------------
+      // =================================================
+      // POST LOGIN
+      // =================================================
 
       const formData =
-        req.body as Record<string, string>;
+        req.body as Record<
+          string,
+          string
+        >;
 
       const innerToken =
         formData._token || '';
@@ -328,18 +347,20 @@ return res
         'no-store',
       );
 
-return res
-  .status(200)
-  .type('text/html')
-  .send(
-    JSON.stringify({
-      status: 'success',
-      message: 'Account Validated.',
-      token,
-      url: '',
-      accountType: 'growtopia',
-    }),
-  );
+      // IMPORTANT:
+      // POST must stay application/json
+      // dashboard.html calls response.json()
+      return res
+        .status(200)
+        .json({
+          status: 'success',
+          message:
+            'Account Validated.',
+          token,
+          url: '',
+          accountType:
+            'growtopia',
+        });
     } catch (error) {
       console.log(
         `[LOGIN ERROR] ${error}`,
@@ -362,7 +383,10 @@ return res
 
 app.all(
   '/player/growid/checktoken',
-  async (_req: Request, res: Response) => {
+  async (
+    _req: Request,
+    res: Response,
+  ) => {
     console.log(
       '[CHECKTOKEN REDIRECT]',
     );
@@ -380,7 +404,10 @@ app.all(
 
 app.all(
   '/player/growid/validate/checktoken',
-  async (req: Request, res: Response) => {
+  async (
+    req: Request,
+    res: Response,
+  ) => {
     try {
       let refreshToken:
         | string
@@ -393,18 +420,23 @@ app.all(
       let source = 'empty';
 
       const contentType =
-        req.headers['content-type'] || '';
+        req.headers['content-type'] ||
+        '';
 
-      // ---------------------------------------------
+      // =================================================
       // OBJECT BODY
-      // ---------------------------------------------
+      // =================================================
 
       if (
-        typeof req.body === 'object' &&
+        typeof req.body ===
+          'object' &&
         req.body !== null
       ) {
         const formData =
-          req.body as Record<string, string>;
+          req.body as Record<
+            string,
+            string
+          >;
 
         refreshToken =
           formData.refreshToken ||
@@ -428,14 +460,17 @@ app.all(
               : 'form-urlencoded';
         }
 
-        // Some clients may send the whole payload as one key.
         if (
           (!refreshToken ||
             !clientData) &&
-          Object.keys(formData).length === 1
+          Object.keys(
+            formData,
+          ).length === 1
         ) {
           const rawPayload =
-            Object.keys(formData)[0];
+            Object.keys(
+              formData,
+            )[0];
 
           const params =
             new URLSearchParams(
@@ -449,7 +484,9 @@ app.all(
             params.get(
               'refresh_token',
             ) ||
-            params.get('token') ||
+            params.get(
+              'token',
+            ) ||
             refreshToken;
 
           clientData =
@@ -459,7 +496,9 @@ app.all(
             params.get(
               'client_data',
             ) ||
-            params.get('_token') ||
+            params.get(
+              '_token',
+            ) ||
             clientData;
 
           source =
@@ -467,14 +506,15 @@ app.all(
         }
       }
 
-      // ---------------------------------------------
+      // =================================================
       // STRING BODY
-      // ---------------------------------------------
+      // =================================================
 
       if (
         (!refreshToken ||
           !clientData) &&
-        typeof req.body === 'string' &&
+        typeof req.body ===
+          'string' &&
         req.body.length > 0
       ) {
         const params =
@@ -489,7 +529,9 @@ app.all(
           params.get(
             'refresh_token',
           ) ||
-          params.get('token') ||
+          params.get(
+            'token',
+          ) ||
           refreshToken;
 
         clientData =
@@ -499,23 +541,26 @@ app.all(
           params.get(
             'client_data',
           ) ||
-          params.get('_token') ||
+          params.get(
+            '_token',
+          ) ||
           clientData;
 
         source =
           'string-body';
       }
 
-      // ---------------------------------------------
-      // RAW BODY
-      // ---------------------------------------------
+      // =================================================
+      // RAW BODY FALLBACK
+      // =================================================
 
       if (
         !refreshToken ||
         !clientData
       ) {
         const rawBody =
-          (req as any).rawBody as
+          (req as any)
+            .rawBody as
             | string
             | undefined;
 
@@ -532,7 +577,9 @@ app.all(
             params.get(
               'refresh_token',
             ) ||
-            params.get('token') ||
+            params.get(
+              'token',
+            ) ||
             refreshToken;
 
           clientData =
@@ -542,7 +589,9 @@ app.all(
             params.get(
               'client_data',
             ) ||
-            params.get('_token') ||
+            params.get(
+              '_token',
+            ) ||
             clientData;
 
           if (
@@ -572,9 +621,9 @@ app.all(
           });
       }
 
-      // ---------------------------------------------
-      // DECODE EXISTING OUTER TOKEN
-      // ---------------------------------------------
+      // =================================================
+      // DECODE OLD TOKEN
+      // =================================================
 
       let decodedRefreshToken =
         Buffer.from(
@@ -584,12 +633,18 @@ app.all(
 
       decodedRefreshToken =
         decodedRefreshToken
-          .replace('&reg=0', '')
-          .replace('&reg=1', '');
+          .replace(
+            '&reg=0',
+            '',
+          )
+          .replace(
+            '&reg=1',
+            '',
+          );
 
-      // ---------------------------------------------
-      // UPDATE INNER CLIENT DATA
-      // ---------------------------------------------
+      // =================================================
+      // CREATE NEW INNER TOKEN
+      // =================================================
 
       const newInnerToken =
         Buffer.from(
@@ -631,10 +686,12 @@ app.all(
         .status(200)
         .json({
           status: 'success',
-          message: 'Token is valid.',
+          message:
+            'Token is valid.',
           token,
           url: '',
-          accountType: 'growtopia',
+          accountType:
+            'growtopia',
           accountAge: 2,
         });
     } catch (error) {
@@ -654,7 +711,7 @@ app.all(
 );
 
 // =====================================================
-// START
+// START SERVER
 // =====================================================
 
 app.listen(PORT, () => {
