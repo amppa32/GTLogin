@@ -13,6 +13,7 @@ app.set('trust proxy', 1);
 // @note middleware setup
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(express.text({ type: ['text/plain', 'application/octet-stream'] }));
 app.use(cors());
 
 // @note rate limiter - 50 requests per minute
@@ -53,15 +54,28 @@ app.get('/', (_req: Request, res: Response) => {
  * @param res - express response
  */
 app.all('/player/login/dashboard', async (req: Request, res: Response) => {
-  const body = req.body;
-  let clientData = '';
+const body = req.body;
+let clientData = '';
 
-  // @note body comes as { "key1|val1\nkey2|val2\n...": "" }
-  // @note the actual data is in the first key, pipe-delimited with \n separators
-  if (body && typeof body === 'object' && Object.keys(body).length > 0) {
-    clientData = Object.keys(body)[0];
+if (typeof body === 'string' && body.length > 0) {
+  clientData = body;
+} else if (
+  body &&
+  typeof body === 'object' &&
+  Object.keys(body).length > 0
+) {
+  const keys = Object.keys(body);
+
+  if (keys.length === 1 && body[keys[0]] === '') {
+    clientData = keys[0];
+  } else {
+    clientData = keys
+      .map((key) => `${key}|${body[key] ?? ''}`)
+      .join('\n');
   }
+}
 
+console.log(`[DASHBOARD] clientData length=${clientData.length}`);
   // @note convert clientData to base64 string without JSON quotes
   const encodedClientData = Buffer.from(clientData).toString('base64');
 
