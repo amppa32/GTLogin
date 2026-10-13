@@ -75,9 +75,7 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
     req.socket.remoteAddress ||
     'unknown';
 
-  console.log(
-    `[REQ] ${req.method} ${req.path} -> ${clientIp}`,
-  );
+  console.log(`[REQ] ${req.method} ${req.path} -> ${clientIp}`);
 
   next();
 });
@@ -107,7 +105,6 @@ app.all(
       const contentType =
         req.headers['content-type'] || '';
 
-      // Growtopia normally sends its client data here.
       if (rawBody && rawBody.length > 0) {
         if (
           contentType.includes(
@@ -118,8 +115,6 @@ app.all(
             const params = new URLSearchParams(rawBody);
             const entries = Array.from(params.entries());
 
-            // Common Growtopia format:
-            // one huge key with empty value.
             if (
               entries.length === 1 &&
               entries[0][1] === ''
@@ -154,7 +149,7 @@ app.all(
         }
       }
 
-      // Fallback to parsed body.
+      // Fallback to parsed body
       if (!clientData && req.body) {
         if (typeof req.body === 'string') {
           clientData = req.body;
@@ -185,17 +180,10 @@ app.all(
         `[DASHBOARD] rawLength=${rawBody?.length ?? 0} clientDataLength=${clientData.length}`,
       );
 
-      if (!clientData) {
-        console.log(
-          '[DASHBOARD WARNING] clientData is empty',
-        );
-      }
-
-      const encodedClientData =
-        Buffer.from(
-          clientData,
-          'utf8',
-        ).toString('base64');
+      const encodedClientData = Buffer.from(
+        clientData,
+        'utf8',
+      ).toString('base64');
 
       const templatePath = path.join(
         process.cwd(),
@@ -203,20 +191,17 @@ app.all(
         'dashboard.html',
       );
 
-      const templateContent =
-        fs.readFileSync(
-          templatePath,
-          'utf8',
-        );
+      const templateContent = fs.readFileSync(
+        templatePath,
+        'utf8',
+      );
 
-      // Replace BOTH login and register hidden tokens.
-      const htmlContent =
-        templateContent.replace(
-          /{{ data }}/g,
-          encodedClientData,
-        );
+      const htmlContent = templateContent.replace(
+        /{{ data }}/g,
+        encodedClientData,
+      );
 
-      res
+      return res
         .status(200)
         .type('text/html')
         .send(htmlContent);
@@ -225,7 +210,7 @@ app.all(
         `[DASHBOARD ERROR] ${error}`,
       );
 
-      res
+      return res
         .status(500)
         .type('text/plain')
         .send('Internal Server Error');
@@ -234,7 +219,8 @@ app.all(
 );
 
 // =====================================================
-// GROWID LOGIN / REGISTER
+// LOGIN / REGISTER
+// TEST VERSION: inner _token IS FORCED EMPTY
 // =====================================================
 
 app.all(
@@ -243,9 +229,6 @@ app.all(
     try {
       const formData =
         req.body as Record<string, string>;
-
-      const innerToken =
-        formData._token || '';
 
       const growId =
         formData.growId || '';
@@ -256,15 +239,13 @@ app.all(
       const email =
         formData.email || '';
 
-      console.log(
-        `[LOGIN] growIdLength=${growId.length} innerTokenLength=${innerToken.length} registration=${email ? 1 : 0}`,
-      );
+      // IMPORTANT TEST:
+      // We deliberately ignore the real formData._token.
+      const innerToken = '';
 
-      if (!innerToken) {
-        console.log(
-          '[LOGIN ERROR] innerToken is empty',
-        );
-      }
+      console.log(
+        `[LOGIN TEST] growIdLength=${growId.length} innerTokenLength=${innerToken.length} registration=${email ? 1 : 0}`,
+      );
 
       let tokenText = '';
 
@@ -283,32 +264,28 @@ app.all(
           `&reg=0`;
       }
 
-      const token =
-        Buffer.from(
-          tokenText,
-          'utf8',
-        ).toString('base64');
+      const token = Buffer.from(
+        tokenText,
+        'utf8',
+      ).toString('base64');
 
       console.log(
-        `[LOGIN SUCCESS] tokenLength=${token.length}`,
+        `[LOGIN TEST SUCCESS] tokenLength=${token.length}`,
       );
 
-      // IMPORTANT:
-      // Return real JSON.
       return res.status(200).json({
         status: 'success',
         message: 'Account Validated.',
         token,
         url: '',
         accountType: 'growtopia',
-        accountAge: 2,
       });
     } catch (error) {
       console.log(
-        `[LOGIN ERROR] ${error}`,
+        `[LOGIN TEST ERROR] ${error}`,
       );
 
-      return res.status(200).json({
+      return res.status(500).json({
         status: 'error',
         message: 'Internal Server Error',
       });
@@ -331,7 +308,7 @@ app.all(
 );
 
 // =====================================================
-// CHECKTOKEN VALIDATION
+// CHECKTOKEN VALIDATE
 // =====================================================
 
 app.all(
@@ -351,10 +328,7 @@ app.all(
       const contentType =
         req.headers['content-type'] || '';
 
-      // -----------------------------
-      // JSON / FORM OBJECT
-      // -----------------------------
-
+      // Parsed object body
       if (
         typeof req.body === 'object' &&
         req.body !== null
@@ -385,9 +359,7 @@ app.all(
             Object.keys(formData)[0];
 
           const params =
-            new URLSearchParams(
-              rawPayload,
-            );
+            new URLSearchParams(rawPayload);
 
           refreshToken =
             params.get('refreshToken') ||
@@ -407,20 +379,14 @@ app.all(
         }
       }
 
-      // -----------------------------
-      // STRING BODY
-      // -----------------------------
-
+      // String body
       if (
-        (!refreshToken ||
-          !clientData) &&
+        (!refreshToken || !clientData) &&
         typeof req.body === 'string' &&
         req.body.length > 0
       ) {
         const params =
-          new URLSearchParams(
-            req.body,
-          );
+          new URLSearchParams(req.body);
 
         refreshToken =
           params.get('refreshToken') ||
@@ -434,14 +400,8 @@ app.all(
           'string/body-parser';
       }
 
-      // -----------------------------
-      // RAW BODY FALLBACK
-      // -----------------------------
-
-      if (
-        !refreshToken ||
-        !clientData
-      ) {
+      // Raw body fallback
+      if (!refreshToken || !clientData) {
         const rawBody =
           (req as any).rawBody as
             | string
@@ -449,20 +409,14 @@ app.all(
 
         if (rawBody) {
           const params =
-            new URLSearchParams(
-              rawBody,
-            );
+            new URLSearchParams(rawBody);
 
           refreshToken =
-            params.get(
-              'refreshToken',
-            ) ||
+            params.get('refreshToken') ||
             refreshToken;
 
           clientData =
-            params.get(
-              'clientData',
-            ) ||
+            params.get('clientData') ||
             clientData;
 
           if (
@@ -495,27 +449,21 @@ app.all(
           });
       }
 
-      // Decode old token.
       let decodedRefreshToken =
         Buffer.from(
           refreshToken,
           'base64',
         ).toString('utf8');
 
-      // Remove old registration flag.
       decodedRefreshToken =
         decodedRefreshToken
           .replace('&reg=0', '')
           .replace('&reg=1', '');
 
-      // Build updated inner client token.
-      const newInnerToken =
-        Buffer.from(
-          clientData,
-          'utf8',
-        ).toString('base64');
+      // TEST VERSION:
+      // Keep refreshed inner token empty too.
+      const newInnerToken = '';
 
-      // Replace old _token.
       const updatedTokenText =
         decodedRefreshToken.replace(
           /(_token=)[^&]*/,
@@ -529,7 +477,7 @@ app.all(
         ).toString('base64');
 
       console.log(
-        `[CHECKTOKEN SUCCESS] tokenLength=${token.length}`,
+        `[CHECKTOKEN TEST SUCCESS] tokenLength=${token.length}`,
       );
 
       return res.status(200).json({
