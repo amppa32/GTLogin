@@ -259,15 +259,18 @@ app.all(
           'no-store',
         );
 
-        return res
-          .status(200)
-          .json({
-            status: 'success',
-            message: 'Account Validated.',
-            token,
-            url: '',
-            accountType: 'growtopia',
-          });
+return res
+  .status(200)
+  .type('text/html')
+  .send(
+    JSON.stringify({
+      status: 'success',
+      message: 'Account Validated.',
+      token,
+      url: '',
+      accountType: 'growtopia',
+    }),
+  );
       }
 
       // ---------------------------------------------
