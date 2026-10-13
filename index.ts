@@ -7,12 +7,11 @@ import fs from 'fs';
 const app = express();
 const PORT = 3000;
 
-// Vercel / proxy
 app.set('trust proxy', 1);
 
-// ----------------------------------------------------
-// BODY PARSERS + RAW BODY CAPTURE
-// ----------------------------------------------------
+// --------------------------------------------------
+// BODY PARSERS + RAW BODY
+// --------------------------------------------------
 
 app.use(
   express.json({
@@ -42,17 +41,15 @@ app.use(
 
 app.use(cors());
 
-// ----------------------------------------------------
+// --------------------------------------------------
 // RATE LIMIT
-// ----------------------------------------------------
+// --------------------------------------------------
 
 const limiter = rateLimit({
   windowMs: 60_000,
   max: 50,
   standardHeaders: true,
   legacyHeaders: false,
-
-  // Needed when running behind Vercel/proxy
   validate: {
     trustProxy: false,
     xForwardedForHeader: false,
@@ -61,15 +58,15 @@ const limiter = rateLimit({
 
 app.use(limiter);
 
-// ----------------------------------------------------
+// --------------------------------------------------
 // STATIC FILES
-// ----------------------------------------------------
+// --------------------------------------------------
 
 app.use(express.static(path.join(process.cwd(), 'public')));
 
-// ----------------------------------------------------
+// --------------------------------------------------
 // REQUEST LOGGER
-// ----------------------------------------------------
+// --------------------------------------------------
 
 app.use((req: Request, _res: Response, next: NextFunction) => {
   const clientIp =
@@ -78,24 +75,22 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
     req.socket.remoteAddress ||
     'unknown';
 
-  console.log(
-    `[REQ] ${req.method} ${req.path} -> ${clientIp}`,
-  );
+  console.log(`[REQ] ${req.method} ${req.path} -> ${clientIp}`);
 
   next();
 });
 
-// ----------------------------------------------------
+// --------------------------------------------------
 // ROOT
-// ----------------------------------------------------
+// --------------------------------------------------
 
 app.get('/', (_req: Request, res: Response) => {
   res.send('GTLogin running!');
 });
 
-// ----------------------------------------------------
+// --------------------------------------------------
 // LOGIN DASHBOARD
-// ----------------------------------------------------
+// --------------------------------------------------
 
 app.all('/player/login/dashboard', async (req: Request, res: Response) => {
   try {
@@ -104,32 +99,15 @@ app.all('/player/login/dashboard', async (req: Request, res: Response) => {
     const rawBody = (req as any).rawBody as string | undefined;
     const contentType = req.headers['content-type'] || '';
 
-    /*
-      Growtopia may send the client data like:
-
-      tankIDName|
-      tankIDPass|
-      requestedName|
-      f|1
-      protocol|227
-      ...
-
-      With application/x-www-form-urlencoded it may arrive
-      URL encoded and sometimes as one key with an empty value.
-    */
-
     if (rawBody && rawBody.length > 0) {
       if (contentType.includes('application/x-www-form-urlencoded')) {
         try {
           const params = new URLSearchParams(rawBody);
           const entries = Array.from(params.entries());
 
-          // Common Growtopia format:
-          // one massive key containing all client data, empty value
           if (entries.length === 1 && entries[0][1] === '') {
             clientData = entries[0][0];
           } else {
-            // Fallback: decode the complete original body
             try {
               clientData = decodeURIComponent(
                 rawBody.replace(/\+/g, ' '),
@@ -148,7 +126,6 @@ app.all('/player/login/dashboard', async (req: Request, res: Response) => {
           }
         }
       } else {
-        // text/plain / octet-stream etc.
         try {
           clientData = decodeURIComponent(
             rawBody.replace(/\+/g, ' '),
@@ -159,7 +136,7 @@ app.all('/player/login/dashboard', async (req: Request, res: Response) => {
       }
     }
 
-    // Fallback to already parsed body
+    // Fallback parsed body
     if (!clientData && req.body) {
       if (typeof req.body === 'string') {
         clientData = req.body;
@@ -188,11 +165,6 @@ app.all('/player/login/dashboard', async (req: Request, res: Response) => {
       `[DASHBOARD] rawLength=${rawBody?.length ?? 0} clientDataLength=${clientData.length}`,
     );
 
-    if (!clientData) {
-      console.log('[DASHBOARD] WARNING: clientData is empty');
-    }
-
-    // Inner token used later by Growtopia
     const encodedClientData = Buffer.from(
       clientData,
       'utf8',
@@ -210,22 +182,25 @@ app.all('/player/login/dashboard', async (req: Request, res: Response) => {
     );
 
     const htmlContent = templateContent.replace(
-      '{{ data }}',
+      /{{ data }}/g,
       encodedClientData,
     );
 
-    res.setHeader('Content-Type', 'text/html');
+    res.status(200);
+    res.type('text/html');
     res.send(htmlContent);
   } catch (error) {
     console.log(`[DASHBOARD ERROR]: ${error}`);
 
-    res.status(500).send('Internal Server Error');
+    res.status(500).type('text/plain').send(
+      'Internal Server Error',
+    );
   }
 });
 
-// ----------------------------------------------------
-// LOGIN / REGISTER VALIDATION
-// ----------------------------------------------------
+// --------------------------------------------------
+// GROWID LOGIN / REGISTER
+// --------------------------------------------------
 
 app.all(
   '/player/growid/login/validate',
@@ -233,58 +208,75 @@ app.all(
     try {
       const formData = req.body as Record<string, string>;
 
-      const _token = formData._token || '';
+      const innerToken = formData._token || '';
       const growId = formData.growId || '';
       const password = formData.password || '';
       const email = formData.email || '';
 
       console.log(
-        `[LOGIN] growIdLength=${growId.length} innerTokenLength=${_token.length} registration=${email ? 1 : 0}`,
+        `[LOGIN] growIdLength=${growId.length} innerTokenLength=${innerToken.length} registration=${email ? 1 : 0}`,
       );
 
-      if (!_token) {
-        console.log('[LOGIN ERROR] _token is empty');
+      if (!innerToken) {
+        console.log('[LOGIN ERROR] inner token is empty');
       }
 
-      let token = '';
+      let tokenText = '';
 
       if (email) {
-        token = Buffer.from(
-          `_token=${_token}&growId=${growId}&password=${password}&email=${email}&reg=1`,
-          'utf8',
-        ).toString('base64');
+        tokenText =
+          `_token=${innerToken}` +
+          `&growId=${growId}` +
+          `&password=${password}` +
+          `&email=${email}` +
+          `&reg=1`;
       } else {
-        token = Buffer.from(
-          `_token=${_token}&growId=${growId}&password=${password}&reg=0`,
-          'utf8',
-        ).toString('base64');
+        tokenText =
+          `_token=${innerToken}` +
+          `&growId=${growId}` +
+          `&password=${password}` +
+          `&reg=0`;
       }
 
-      res.setHeader('Content-Type', 'application/json');
+      const token = Buffer.from(
+        tokenText,
+        'utf8',
+      ).toString('base64');
 
-      res.send(
-        JSON.stringify({
-          status: 'success',
-          message: 'Account Validated.',
-          token,
-          url: '',
-          accountType: 'growtopia',
-        }),
-      );
+      // IMPORTANT:
+      // Growtopia expects this response as text/html,
+      // even though the body itself looks like JSON.
+      res
+        .status(200)
+        .type('text/html')
+        .send(
+          JSON.stringify({
+            status: 'success',
+            message: 'Account Validated.',
+            token,
+            url: '',
+            accountType: 'growtopia',
+          }),
+        );
     } catch (error) {
       console.log(`[LOGIN ERROR]: ${error}`);
 
-      res.status(500).json({
-        status: 'error',
-        message: 'Internal Server Error',
-      });
+      res
+        .status(200)
+        .type('text/html')
+        .send(
+          JSON.stringify({
+            status: 'error',
+            message: 'Internal Server Error',
+          }),
+        );
     }
   },
 );
 
-// ----------------------------------------------------
-// CHECK TOKEN REDIRECT
-// ----------------------------------------------------
+// --------------------------------------------------
+// CHECKTOKEN REDIRECT
+// --------------------------------------------------
 
 app.all(
   '/player/growid/checktoken',
@@ -296,9 +288,9 @@ app.all(
   },
 );
 
-// ----------------------------------------------------
-// CHECK / REFRESH TOKEN
-// ----------------------------------------------------
+// --------------------------------------------------
+// CHECKTOKEN VALIDATE
+// --------------------------------------------------
 
 app.all(
   '/player/growid/validate/checktoken',
@@ -312,10 +304,7 @@ app.all(
       const contentType =
         req.headers['content-type'] || '';
 
-      // ----------------------------------------
-      // Parsed JSON / form body
-      // ----------------------------------------
-
+      // Parsed object / JSON / form-urlencoded
       if (
         typeof req.body === 'object' &&
         req.body !== null
@@ -330,9 +319,7 @@ app.all(
           refreshToken = formData.refreshToken;
           clientData = formData.clientData;
 
-          source = contentType.includes(
-            'application/json',
-          )
+          source = contentType.includes('application/json')
             ? 'json/object'
             : 'form-urlencoded';
         } else if (
@@ -353,17 +340,14 @@ app.all(
             undefined;
 
           if (refreshToken || clientData) {
-            source =
-              'single-key-form-payload';
+            source = 'single-key-form-payload';
           }
         }
       }
 
-      // ----------------------------------------
-      // Text body
-      // ----------------------------------------
-
-      else if (
+      // Plain text
+      if (
+        (!refreshToken || !clientData) &&
         typeof req.body === 'string' &&
         req.body.length > 0
       ) {
@@ -372,19 +356,16 @@ app.all(
 
         refreshToken =
           params.get('refreshToken') ||
-          undefined;
+          refreshToken;
 
         clientData =
           params.get('clientData') ||
-          undefined;
+          clientData;
 
         source = 'string/body-parser';
       }
 
-      // ----------------------------------------
-      // RAW BODY FALLBACK
-      // ----------------------------------------
-
+      // Raw body fallback
       if (!refreshToken || !clientData) {
         const rawBody =
           (req as any).rawBody as
@@ -410,7 +391,7 @@ app.all(
       }
 
       console.log(
-        `[CHECKTOKEN] Parsed as ${source}`,
+        `[CHECKTOKEN] source=${source} refresh=${refreshToken ? 1 : 0} clientData=${clientData ? 1 : 0}`,
       );
 
       if (!refreshToken || !clientData) {
@@ -418,51 +399,35 @@ app.all(
           '[CHECKTOKEN ERROR] Missing refreshToken or clientData',
         );
 
-        res.status(200).json({
-          status: 'error',
-          message:
-            'Missing refreshToken or clientData',
-        });
+        res
+          .status(200)
+          .type('text/html')
+          .send(
+            JSON.stringify({
+              status: 'error',
+              message:
+                'Missing refreshToken or clientData',
+            }),
+          );
 
         return;
       }
 
-      // Decode current refresh token
       let decodedRefreshToken =
         Buffer.from(
           refreshToken,
           'base64',
-        ).toString('utf-8');
+        ).toString('utf8');
 
-      // Remove old registration flag
-      if (
-        decodedRefreshToken.includes(
-          '&reg=0',
-        )
-      ) {
-        decodedRefreshToken =
-          decodedRefreshToken.replace(
-            '&reg=0',
-            '',
-          );
-      } else if (
-        decodedRefreshToken.includes(
-          '&reg=1',
-        )
-      ) {
-        decodedRefreshToken =
-          decodedRefreshToken.replace(
-            '&reg=1',
-            '',
-          );
-      }
+      decodedRefreshToken =
+        decodedRefreshToken
+          .replace('&reg=0', '')
+          .replace('&reg=1', '');
 
-      // Create updated inner client token
-      const newInnerToken =
-        Buffer.from(
-          clientData,
-          'utf8',
-        ).toString('base64');
+      const newInnerToken = Buffer.from(
+        clientData,
+        'utf8',
+      ).toString('base64');
 
       const updatedTokenText =
         decodedRefreshToken.replace(
@@ -470,43 +435,45 @@ app.all(
           `$1${newInnerToken}`,
         );
 
-      const token =
-        Buffer.from(
-          updatedTokenText,
-          'utf8',
-        ).toString('base64');
+      const token = Buffer.from(
+        updatedTokenText,
+        'utf8',
+      ).toString('base64');
 
-      res.setHeader(
-        'Content-Type',
-        'application/json',
-      );
-
-      res.send(
-        JSON.stringify({
-          status: 'success',
-          message: 'Token is valid.',
-          token,
-          url: '',
-          accountType: 'growtopia',
-          accountAge: 2,
-        }),
-      );
+      res
+        .status(200)
+        .type('text/html')
+        .send(
+          JSON.stringify({
+            status: 'success',
+            message: 'Account Validated.',
+            token,
+            url: '',
+            accountType: 'growtopia',
+            accountAge: 2,
+          }),
+        );
     } catch (error) {
       console.log(
         `[CHECKTOKEN ERROR]: ${error}`,
       );
 
-      res.status(200).json({
-        status: 'error',
-        message: 'Internal Server Error',
-      });
+      res
+        .status(200)
+        .type('text/html')
+        .send(
+          JSON.stringify({
+            status: 'error',
+            message: 'Internal Server Error',
+          }),
+        );
     }
   },
 );
 
-// ----------------------------------------------------
+// --------------------------------------------------
 // START SERVER
-// ----------------------------------------------------
+// --------------------------------------------------
 
 app.listen(PORT, () => {
   console.log(
