@@ -215,6 +215,41 @@
       </div>
     </section>
   </div>
+  <script>
+document.addEventListener('DOMContentLoaded', function () {
+  ['loginForm', 'registerForm'].forEach(function (id) {
+    var form = document.getElementById(id);
+
+    if (!form) return;
+
+    form.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+
+      try {
+        var response = await fetch(form.action, {
+          method: 'POST',
+          body: new URLSearchParams(new FormData(form))
+        });
+
+        var result = await response.json();
+
+        console.log('[LOGIN RESPONSE]', result.status);
+
+        if (result.status === 'success' && result.token) {
+          window.location.href =
+            '/player/growid/login/validate?token=' +
+            encodeURIComponent(result.token);
+        }
+      } catch (err) {
+        console.log('[LOGIN ERROR]', err);
+      }
+
+      return false;
+    }, true);
+  });
+});
+</script>
 </body>
 <!-- JQUERY LIBRARY -->
 <script
